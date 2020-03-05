@@ -40,6 +40,7 @@ ConcurrentMapCache等；
         1. 确定方法需要被缓存以及他们的缓存策略
         2. 从缓存中读取之前缓存存储的数据
     + ![springCache1](https://github.com/longlearn/springboot-cache/blob/master/imgs/springCache1.png)
+    --------------------
 * 2.几个重要概念&缓存注解
     + `Cache` : 缓存接口，定义缓存操作。实现有：`RedisCache`、`EhCacheCache`、
 `ConcurrentMapCache`等
@@ -50,6 +51,7 @@ ConcurrentMapCache等；
     + `@EnableCaching` : 开启基于注解的缓存
     + `keyGenerator` : 缓存数据时key生成策略
     + `serialize` : 缓存数据时value序列化策略
+    ---------------
 * 3.`@Cacheable`,`@CachePut`,`@CacheEvict` 主要参数
     + ![springCache2](https://github.com/longlearn/springboot-cache/blob/master/imgs/springCache2.png)
     + ![springCache3](https://github.com/longlearn/springboot-cache/blob/master/imgs/springCache3.png)
@@ -96,8 +98,158 @@ ConcurrentMapCache等；
         </dependency>
     </dependencies>
     ```
+    ------------
 * 2.@EnableCaching开启缓存  
     ![springbootCache1](https://github.com/longlearn/springboot-cache/blob/master/imgs/springbootCache1.png)
+    ------------------
+* 3.使用缓存注解
+    - 创建mapper接口  
+    ``` java
+    public interface EmployeeMapper {
+        @Insert("insert into employee(lastName,email,gender,d_id) values(#{lastName},#{email},#{gender},#{dId})")
+        int addEmp(Employee employee);
+        @Delete("delete employee where id = #{id}")
+        int deleteEmp(Integer id);
+        @Update("update employee set lastName=#{lastName},email=#{email},gender=#{gender},d_id=#{dId} where id=#{id}")
+        void updateEmp(Employee employee);
+
+        @Select("SELECT * FROM employee WHERE id = #{id}")
+        Employee findById(Integer id);
+
+        @Select("SELECT * FROM employee WHERE lastName = #{lastName}")
+        Employee findByLastName(String lastName);
+    }
+    ```
+    ------------
+    - 实体类(属性，省略getter、setter方法)
+    ``` java
+        private Integer id;
+        private String lastName;
+        private String email;
+        private Integer gender; //性别 1男  0女
+        private Integer dId;
+    ```
+    -------------
+    - service（在service层使用缓存注解，解决业务逻辑）  
+    ``` java
+    package com.czl.springbootcache.service;
+
+    import com.czl.springbootcache.bean.Employee;
+    import com.czl.springbootcache.mapper.EmployeeMapper;
+    import org.springframework.beans.factory.annotation.Autowired;
+    import org.springframework.cache.annotation.*;
+    import org.springframework.stereotype.Service;
+
+    /**
+     * ClassName:EmpSevice
+     * Package:com.czl.springbootcache.service
+     * Description:
+     *
+     * @date:2020-3-4 10:59
+     * @autor:18855032359
+     */
+
+    /**
+     * CacheConfig：总体配置
+     * 在类上配置之后，方法上就不需要配置了
+     */
+    @CacheConfig(cacheNames = "emp")
+    @Service
+    public class EmpSevice {
+        @Autowired()
+        EmployeeMapper employeeMapper;
+        public int addEmployee(Employee employee) {
+            return employeeMapper.addEmp(employee);
+        }
+
+        /**
+         * @CacheEvict:清除缓存
+         * key: 指定要清除的缓存
+         * allEntries = true  -->清除这个缓存的所有数据
+         * beforeInvocation = true  -->缓存的清除是否再执行方法之前
+         * 当值为false,则当方法报错时，不会清除缓存
+         * 值为true,方法即使报错，也会清缓存
+         *
+         * @param id
+         * @return
+         */
+        @CacheEvict(/*value = "emp",*/key = "#id"/*allEntries = true*/,beforeInvocation = true  )
+        public int deleteEmployee(Integer id) {
+            System.out.println("伪装删除id为"+id+"的员工");
+    //        employeeMapper.deleteEmp(id);
+            int i = 10/0;
+            return id;
+        }
+
+
+        /**
+         *
+         * @Cacheable
+         * 将方法的运行结果进行缓存；以后再要相同的数据，直接从缓存中取，不用再调用方法了
+         *
+         * @param id
+         * @return
+         */
+        @Cacheable(cacheNames = "emp")
+        public Employee findById(Integer id) {
+            System.out.println("查询id为 "+id +"的员工");
+            return employeeMapper.findById(id);
+        }
+
+        /**
+         * @CachePut：既调用方法，又更新缓存数据
+         * 修改了数据库的某个数据，同时更新缓存
+         * @param employee
+         */
+        @CachePut(/*cacheNames = "emp",*/key = "#result.id")
+        public Employee updateEmp(Employee employee) {
+            System.out.println("修改id为 "+employee.getId() +"的员工");
+            employeeMapper.updateEmp(employee);
+            return employee;
+        }
+
+        @Caching(
+                cacheable = {
+                    @Cacheable(/*value = "emp",*/key = "#lastName")
+                },
+                put = {
+                        @CachePut(/*cacheNames = "emp",*/key = "#result.id"),
+                        @CachePut(/*cacheNames = "emp",*/key = "#result.email")
+                }
+        )
+        public Employee findByLastName(String lastName) {
+            System.out.println("查询lastName为 "+lastName +"的员工");
+            return employeeMapper.findByLastName(lastName);
+        }
+
+    }
+
+    ```
+    ---------------
+    - controller
+    ``` java
+        @Autowired
+        EmpSevice empSevice;
+
+        @RequestMapping(value = "/emp/{id}")
+        public Employee empInfoById(@PathVariable("id") Integer id) {
+            return empSevice.findById(id);
+        }
+        @GetMapping(value = "/emp")
+        public Employee updateEmp(Employee employee) {
+            return empSevice.updateEmp(employee);
+        }
+        @GetMapping("/deleteEmp")
+        public String deleteEmp(Integer id) {
+            empSevice.deleteEmployee(id);
+            return "deleteEmp Success";
+        }
+        @GetMapping("/emp/lastname/{lastName}")
+        public Employee employee (@PathVariable("lastName") String lastName) {
+            return empSevice.findByLastName(lastName);
+        }
+    ```
+    -----------------
     
 
     
